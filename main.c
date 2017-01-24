@@ -48,6 +48,7 @@
 
 #define OUTPUT_FORMAT_DEBUG				0
 #define OUTPUT_FORMAT_XYZ				1
+#define OUTPUT_FORMAT_XYZ_BIN			2
 
 /**
  * Statistics.
@@ -137,19 +138,19 @@ static struct option long_options[] = {
 static void print_usage(int argc, char **argv)
 {
 	fprintf(stderr, "%s usage:\n", argv[0]);
-	fprintf(stderr, "  --port          -p <PORT>    Listen port. Default: %d\n", args_default.port);
-	fprintf(stderr, "  --distance-min  -l <MM>      Discard distances less than this value, in mm. Default: %d\n", args_default.distance_min);
-	fprintf(stderr, "  --distance-max  -g <MM>      Discard distances greater than this value, in mm. Default: %d\n", args_default.distance_max);
-	fprintf(stderr, "  --origo-x       -x <MM>      Move origo X by this amount, in mm. Default: %d\n", args_default.origo_x);
-	fprintf(stderr, "  --origo-y       -y <MM>      Move origo Y by this amount, in mm. Default: %d\n", args_default.origo_y);
-	fprintf(stderr, "  --origo-z       -z <MM>      Move origo Z by this amount, in mm. Default: %d\n", args_default.origo_z);
-	fprintf(stderr, "  --packets-max   -c <COUNT>   Stop after receiving this many packets (-1 to disable). Default: %d\n", args_default.packets_max);
-	fprintf(stderr, "  --output-format -f <OUTFMT>  Specify output format. Default: xyz\n");
-	fprintf(stderr, "  --help                       Print this message\n");
+	fprintf(stderr, "  --port          -p <PORT>    Listen port. Default: %d.\n", args_default.port);
+	fprintf(stderr, "  --distance-min  -l <MM>      Discard distances less than this value, in mm. Default: %d.\n", args_default.distance_min);
+	fprintf(stderr, "  --distance-max  -g <MM>      Discard distances greater than this value, in mm. Default: %d.\n", args_default.distance_max);
+	fprintf(stderr, "  --origo-x       -x <MM>      Move origo X by this amount, in mm. Default: %d.\n", args_default.origo_x);
+	fprintf(stderr, "  --origo-y       -y <MM>      Move origo Y by this amount, in mm. Default: %d.\n", args_default.origo_y);
+	fprintf(stderr, "  --origo-z       -z <MM>      Move origo Z by this amount, in mm. Default: %d.\n", args_default.origo_z);
+	fprintf(stderr, "  --packets-max   -c <COUNT>   Stop after receiving this many packets (-1 to disable). Default: %d.\n", args_default.packets_max);
+	fprintf(stderr, "  --output-format -f <OUTFMT>  Specify output format. Default: xyz.\n");
+	fprintf(stderr, "  --help          -h           Print this message.\n");
 	fprintf(stderr, "\n");
 	fprintf(stderr, "Supported output formats:\n");
-	fprintf(stderr, "  xyz\n");
-	fprintf(stderr, "  debug (x, y, z, reflectivity, distance, azimuth)\n");
+	fprintf(stderr, "  xyz (ASCII: x, y, z)\n");
+	fprintf(stderr, "  debug (ASCII: x, y, z, reflectivity, distance, azimuth)\n");
 }
 
 static void parse_opts(int argc, char **argv)
@@ -158,7 +159,7 @@ static void parse_opts(int argc, char **argv)
 
 	int opt = 0;
 	int long_index = 0;
-	while((opt = getopt_long(argc, argv, "p:l:g:hx:y:z:f:", long_options, &long_index)) != -1) {
+	while((opt = getopt_long(argc, argv, "p:l:g:hx:y:z:f:c:", long_options, &long_index)) != -1) {
 		switch(opt) {
 			case 'p':
 				arguments.port = atoi(optarg);
@@ -186,6 +187,8 @@ static void parse_opts(int argc, char **argv)
 					arguments.output_format = OUTPUT_FORMAT_XYZ;
 				} else if(strcmp(optarg, "debug") == 0) {
 					arguments.output_format = OUTPUT_FORMAT_DEBUG;
+				} else if(strcmp(optarg, "xyzbin") == 0) {
+					arguments.output_format = OUTPUT_FORMAT_XYZ_BIN;
 				} else {
 					fprintf(stderr, "Invalid output format: %s\n", optarg);
 					print_usage(argc, argv);
@@ -323,9 +326,9 @@ void vlp16_parse_data_block(struct vlp16_packet *packet, int block_index)
 		vlp16_transform_coords(laser_id, azimuth, distance, &x, &y, &z);
 
 		/* Move origo. */
-		x += arguments.origo_x;
-		y += arguments.origo_y;
-		z += arguments.origo_z;
+		x += arguments.origo_x / (double) DISTANCE_UNIT_FRACTION;
+		y += arguments.origo_y / (double) DISTANCE_UNIT_FRACTION;
+		z += arguments.origo_z / (double) DISTANCE_UNIT_FRACTION;
 
 		/* Print line */
 		switch(arguments.output_format) {
@@ -334,6 +337,12 @@ void vlp16_parse_data_block(struct vlp16_packet *packet, int block_index)
 				break;
 			case OUTPUT_FORMAT_DEBUG:
 				printf("%f\t%f\t%f\t%hhu\t%f\t%d\n", x, y, z, channel->reflectivity, distance, block->azimuth);
+				break;
+			case OUTPUT_FORMAT_XYZ_BIN:
+				/* No support for endian awareness with doubles. May not work on other system! */
+				fwrite(&x, sizeof(double), 1, stdout);
+				fwrite(&y, sizeof(double), 1, stdout);
+				fwrite(&z, sizeof(double), 1, stdout);
 				break;
 		}
 		statistics.points_count ++;
