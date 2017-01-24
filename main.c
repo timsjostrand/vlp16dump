@@ -13,6 +13,7 @@
 #include <string.h>
 #include <netdb.h>
 #include <math.h>
+#include <getopt.h>
 #include <inttypes.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -28,10 +29,9 @@
 #define CHANNELS_COUNT			32
 #define DISTANCE_UNIT_FRACTION	1000					/* meters */
 
-#define cast_at(type, buf, addr) (*((type *) &buf[addr]))
 #define bail(fmt, ...) do { fprintf(stderr, "ERROR: " fmt, ##__VA_ARGS__); exit(1); } while(0)
 #define deg_to_rad(deg) (deg * M_PI / 180.0f)
-#define rad_to_deg(rad) (rad * 180.0 / M_PI) 
+#define rad_to_deg(rad) (rad * 180.0 / M_PI)
 
 #define FACTORY_RETURN_MODE_STRONGEST	0x37
 #define FACTORY_RETURN_MODE_LAST		0x38
@@ -95,6 +95,88 @@ static double vlp16_vertical_angles[] = {
 	deg_to_rad( -1), // 14
 	deg_to_rad( 15)  // 15
 };
+
+struct arguments {
+	int		port;
+	int		distance_min;
+	int		distance_max;
+	int		origo_x;
+	int		origo_y;
+	int		origo_z;
+	int		packets_max;
+} arguments;
+
+struct arguments args_default = {
+	.port = DEFAULT_PORT,
+	.distance_min = 1000,
+	.distance_max = -1,
+	.origo_x = 0,
+	.origo_y = 0,
+	.origo_z = 0,
+	.packets_max = -1
+};
+
+static struct option long_options[] = {
+	{ "port",			required_argument,	0, 'p' },
+	{ "distance-min",	required_argument,	0, 'l' },
+	{ "distance-max",	required_argument,	0, 'g' },
+	{ "help",			no_argument,		0, 'h' },
+	{ "origo-x",		required_argument,	0, 'x' },
+	{ "origo-y",		required_argument,	0, 'y' },
+	{ "origo-z",		required_argument,	0, 'z' },
+	{ "packets-max",	required_argument,	0, 'c' },
+	{ 0 }
+};
+
+static void print_usage(int argc, char **argv)
+{
+	fprintf(stderr, "%s usage:\n", argv[0]);
+	fprintf(stderr, "  --port          -p <PORT>    Listen port. Default: %d\n", args_default.port);
+	fprintf(stderr, "  --distance-min  -l <MM>      Discard distances less than this value, in mm. Default: %d\n", args_default.distance_min);
+	fprintf(stderr, "  --distance-max  -g <MM>      Discard distances greater than this value, in mm. Default: %d\n", args_default.distance_max);
+	fprintf(stderr, "  --origo-x       -x <MM>      Move origo X by this amount, in mm. Default: %d\n", args_default.origo_x);
+	fprintf(stderr, "  --origo-y       -y <MM>      Move origo Y by this amount, in mm. Default: %d\n", args_default.origo_y);
+	fprintf(stderr, "  --origo-z       -z <MM>      Move origo Z by this amount, in mm. Default: %d\n", args_default.origo_z);
+	fprintf(stderr, "  --packets-max   -c <COUNT>   Stop after receiving this many packets (-1 to disable). Default: %d\n", args_default.packets_max);
+	fprintf(stderr, "  --help                       Print this message\n");
+}
+
+static void parse_opts(int argc, char **argv)
+{
+	arguments = args_default;
+
+	int opt = 0;
+	int long_index = 0;
+	while((opt = getopt_long(argc, argv, "p:l:g:hx:y:z:", long_options, &long_index)) != -1) {
+		switch(opt) {
+			case 'p':
+				arguments.port = atoi(optarg);
+				break;
+			case 'l':
+				arguments.distance_min = atoi(optarg);
+				break;
+			case 'g':
+				arguments.distance_max = atoi(optarg);
+				break;
+			case 'x':
+				arguments.origo_x = atoi(optarg);
+				break;
+			case 'y':
+				arguments.origo_y = atoi(optarg);
+				break;
+			case 'z':
+				arguments.origo_z = atoi(optarg);
+				break;
+			case 'c':
+				arguments.packets_max = atoi(optarg);
+				break;
+			case 'h':
+			default:
+				print_usage(argc, argv);
+				exit(EXIT_FAILURE);
+		}
+	}
+}
 
 void hexdump(const char *title, const char *buf, const size_t count)
 {
@@ -191,15 +273,23 @@ void vlp16_parse_data_block(struct vlp16_packet *packet, int block_index)
 		 * by 2.0mm to calculate the absolute distance to the object. */
 		double distance = channel->distance / (double) (DISTANCE_UNIT_FRACTION) * 2.0;
 
-#ifdef SKIP_INVALID_DISTANCE
 		/* Distances < 1 meter is supposed to be discarded according to
 		 * documentation. */
-		double distance_min = 1000 / (double) DISTANCE_UNIT_FRACTION;
-		if(distance < distance_min) {
-			statistics.skipped_r ++;
-			continue;
+		if(arguments.distance_min != -1) {
+			double distance_min = arguments.distance_min / (double) DISTANCE_UNIT_FRACTION;
+			if(distance < distance_min) {
+				statistics.skipped_r ++;
+				continue;
+			}
 		}
-#endif
+
+		if(arguments.distance_max != -1) {
+			double distance_max = arguments.distance_max / (double) DISTANCE_UNIT_FRACTION;
+			if(distance > distance_max) {
+				statistics.skipped_r ++;
+				continue;
+			}
+		}
 
 		/* Interpolate azimuth for channels [16..32] */
 		if(i == 16) {
@@ -209,10 +299,15 @@ void vlp16_parse_data_block(struct vlp16_packet *packet, int block_index)
 		/* Transform spherical coordinates to XYZ. */
 		int laser_id = i % 16;
 		vlp16_transform_coords(laser_id, azimuth, distance, &x, &y, &z);
+
+		/* Move origo. */
+		x += arguments.origo_x;
+		y += arguments.origo_y;
+		z += arguments.origo_z;
+
+		/* Print line */
 		printf("%f\t%f\t%f\t%hhu\t%f\t%d\n", x, y, z, channel->reflectivity, distance, block->azimuth);
 		statistics.points_count ++;
-
-		/* TODO: interpolate and update azimuth when i%16==0 */
 	}
 }
 
@@ -305,6 +400,7 @@ void print_statistics()
 {
 	fprintf(stderr, "\n");
 	fprintf(stderr, "Statistics:\n");
+	fprintf(stderr, "	Origo: (%d, %d, %d)\n", arguments.origo_x, arguments.origo_y, arguments.origo_z);
 	fprintf(stderr, "	Packets received: %d\n", statistics.packets_count);
 	fprintf(stderr, "	Valid points: %d\n", statistics.points_count);
 	fprintf(stderr, "	Skipped invalid distance: %d\n", statistics.skipped_r);
@@ -315,7 +411,6 @@ void print_statistics()
 int main(int argc, char **argv)
 {
 	int sockfd; /* socket */
-	int port; /* port to listen on */
 	socklen_t clientlen; /* byte size of client's address */
 	struct sockaddr_in serveraddr; /* server's addr */
 	struct sockaddr_in clientaddr; /* client addr */
@@ -325,13 +420,10 @@ int main(int argc, char **argv)
 	int optval; /* flag value for setsockopt */
 	int read; /* message byte size */
 
-	signal(SIGINT, print_statistics);
+	/* Parse argument options */
+	parse_opts(argc, argv);
 
-	/* Optionally parse UDP port from arguments. */
-	port = DEFAULT_PORT;
-	if(argc == 2) {
-		port = atoi(argv[1]);
-	}
+	signal(SIGINT, print_statistics);
 
 	/*
 	 * socket: create the parent socket
@@ -357,14 +449,14 @@ int main(int argc, char **argv)
 	bzero((char *) &serveraddr, sizeof(serveraddr));
 	serveraddr.sin_family = AF_INET;
 	serveraddr.sin_addr.s_addr = htonl(INADDR_ANY);
-	serveraddr.sin_port = htons((unsigned short)port);
+	serveraddr.sin_port = htons((unsigned short) arguments.port);
 
 	/* bind */
 	if(bind(sockfd, (struct sockaddr *) &serveraddr, sizeof(serveraddr)) < 0) {
 		bail("ERROR: bind()\n");
 	}
 
-	fprintf(stderr, "listening on %d...\n", port);
+	fprintf(stderr, "listening on %d...\n", arguments.port);
 
 	/*
 	 * main loop: wait for a datagram, then echo it
@@ -389,7 +481,8 @@ int main(int argc, char **argv)
 		statistics.packets_count ++;
 		vlp16_parse_packet(buf, read);
 
-		if(statistics.packets_count >= 260) {
+		if(arguments.packets_max != -1 && statistics.packets_count >= arguments.packets_max) {
+			fprintf(stderr, "Stopping after %d packets\n", arguments.packets_max);
 			break;
 		}
 
