@@ -46,6 +46,9 @@
 #define SKIP_INVALID_DISTANCE
 //#define AZIMUTH_NET_BYTE_ORDER
 
+#define OUTPUT_FORMAT_DEBUG				0
+#define OUTPUT_FORMAT_XYZ				1
+
 /**
  * Statistics.
  */
@@ -104,6 +107,7 @@ struct arguments {
 	int		origo_y;
 	int		origo_z;
 	int		packets_max;
+	int		output_format;
 } arguments;
 
 struct arguments args_default = {
@@ -113,7 +117,8 @@ struct arguments args_default = {
 	.origo_x = 0,
 	.origo_y = 0,
 	.origo_z = 0,
-	.packets_max = -1
+	.packets_max = -1,
+	.output_format = OUTPUT_FORMAT_XYZ
 };
 
 static struct option long_options[] = {
@@ -125,6 +130,7 @@ static struct option long_options[] = {
 	{ "origo-y",		required_argument,	0, 'y' },
 	{ "origo-z",		required_argument,	0, 'z' },
 	{ "packets-max",	required_argument,	0, 'c' },
+	{ "output-format",	required_argument,	0, 'f' },
 	{ 0 }
 };
 
@@ -138,7 +144,12 @@ static void print_usage(int argc, char **argv)
 	fprintf(stderr, "  --origo-y       -y <MM>      Move origo Y by this amount, in mm. Default: %d\n", args_default.origo_y);
 	fprintf(stderr, "  --origo-z       -z <MM>      Move origo Z by this amount, in mm. Default: %d\n", args_default.origo_z);
 	fprintf(stderr, "  --packets-max   -c <COUNT>   Stop after receiving this many packets (-1 to disable). Default: %d\n", args_default.packets_max);
+	fprintf(stderr, "  --output-format -f <OUTFMT>  Specify output format. Default: xyz\n");
 	fprintf(stderr, "  --help                       Print this message\n");
+	fprintf(stderr, "\n");
+	fprintf(stderr, "Supported output formats:\n");
+	fprintf(stderr, "  xyz\n");
+	fprintf(stderr, "  debug (x, y, z, reflectivity, distance, azimuth)\n");
 }
 
 static void parse_opts(int argc, char **argv)
@@ -147,7 +158,7 @@ static void parse_opts(int argc, char **argv)
 
 	int opt = 0;
 	int long_index = 0;
-	while((opt = getopt_long(argc, argv, "p:l:g:hx:y:z:", long_options, &long_index)) != -1) {
+	while((opt = getopt_long(argc, argv, "p:l:g:hx:y:z:f:", long_options, &long_index)) != -1) {
 		switch(opt) {
 			case 'p':
 				arguments.port = atoi(optarg);
@@ -169,6 +180,17 @@ static void parse_opts(int argc, char **argv)
 				break;
 			case 'c':
 				arguments.packets_max = atoi(optarg);
+				break;
+			case 'f':
+				if(strcmp(optarg, "xyz") == 0) {
+					arguments.output_format = OUTPUT_FORMAT_XYZ;
+				} else if(strcmp(optarg, "debug") == 0) {
+					arguments.output_format = OUTPUT_FORMAT_DEBUG;
+				} else {
+					fprintf(stderr, "Invalid output format: %s\n", optarg);
+					print_usage(argc, argv);
+					exit(EXIT_FAILURE);
+				}
 				break;
 			case 'h':
 			default:
@@ -306,7 +328,14 @@ void vlp16_parse_data_block(struct vlp16_packet *packet, int block_index)
 		z += arguments.origo_z;
 
 		/* Print line */
-		printf("%f\t%f\t%f\t%hhu\t%f\t%d\n", x, y, z, channel->reflectivity, distance, block->azimuth);
+		switch(arguments.output_format) {
+			case OUTPUT_FORMAT_XYZ:
+				printf("%f\t%f\t%f\n", x, y, z);
+				break;
+			case OUTPUT_FORMAT_DEBUG:
+				printf("%f\t%f\t%f\t%hhu\t%f\t%d\n", x, y, z, channel->reflectivity, distance, block->azimuth);
+				break;
+		}
 		statistics.points_count ++;
 	}
 }
