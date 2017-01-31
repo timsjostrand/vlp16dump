@@ -40,8 +40,7 @@
 #define FACTORY_SOURCE_HDL32E			0x21
 #define FACTORY_SOURCE_VLP16			0x22
 
-#define DEBUG_DATA_BLOCK
-#define DEBUG_FACTORY
+//#define DEBUG_FACTORY
 
 #define SKIP_INVALID_DISTANCE
 //#define AZIMUTH_NET_BYTE_ORDER
@@ -448,34 +447,28 @@ void print_statistics()
 
 int main(int argc, char **argv)
 {
-	int sockfd; /* socket */
-	socklen_t clientlen; /* byte size of client's address */
-	struct sockaddr_in serveraddr; /* server's addr */
-	struct sockaddr_in clientaddr; /* client addr */
-	struct hostent *hostp; /* client host info */
-	char buf[PACKET_SIZE]; /* message buf */
-	char *hostaddrp; /* dotted decimal host addr string */
-	int optval; /* flag value for setsockopt */
-	int read; /* message byte size */
+	int sockfd;
+	socklen_t clientlen;
+	struct sockaddr_in serveraddr;
+	struct sockaddr_in clientaddr;
+	struct hostent *hostp;
+	char buf[PACKET_SIZE];
+	char *hostaddrp;
+	int optval;
+	int read;
 
-	/* Parse argument options */
+	/* parse argument options */
 	parse_opts(argc, argv);
 
 	signal(SIGINT, print_statistics);
 
-	/*
-	 * socket: create the parent socket
-	 */
+	/* create the server socket */
 	sockfd = socket(AF_INET, SOCK_DGRAM, 0);
 	if(sockfd < 0) {
 		bail("ERROR opening socket\n");
 	}
 
-	/* setsockopt: Handy debugging trick that lets
-	 * us rerun the server immediately after we kill it;
-	 * otherwise we have to wait about 20 secs.
-	 * Eliminates "ERROR on binding: Address already in use" bail.
-	 */
+	/* reuse address for fast restart of server */
 	optval = 1;
 	setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, (const void *) &optval , sizeof(int));
 
@@ -496,9 +489,7 @@ int main(int argc, char **argv)
 
 	fprintf(stderr, "listening on %d...\n", arguments.port);
 
-	/*
-	 * main loop: wait for a datagram, then echo it
-	 */
+	/* main loop: wait for a datagram and parse a packet from it */
 	clientlen = sizeof(clientaddr);
 	while(1) {
 		fprintf(stderr, "recvfrom...\n");
@@ -523,14 +514,6 @@ int main(int argc, char **argv)
 			fprintf(stderr, "Stopping after %d packets\n", arguments.packets_max);
 			break;
 		}
-
-		/* sendto: echo the input back to the client */
-#if 0
-		read = sendto(sockfd, buf, strlen(buf), 0, (struct sockaddr *) &clientaddr, clientlen);
-		if(read < 0) {
-			bail("ERROR in sendto\n");
-		}
-#endif
 	}
 
 	print_statistics();
