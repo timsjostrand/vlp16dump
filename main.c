@@ -1,8 +1,6 @@
 /*
  * Velodyne VLP-16 packet parser and dumper.
  *
- * usage: vlp16dump [port]
- *
  * Author: Tim Sjöstrand <timjon@student.chalmers.se>
  */
 
